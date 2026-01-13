@@ -17,21 +17,25 @@ GOOGLE_API_KEY = None
 # Attempt to load from Streamlit Secrets (Cloud) or Local .streamlit/secrets.toml
 if "GOOGLE_API_KEY" in st.secrets:
     GOOGLE_API_KEY = st.secrets["GOOGLE_API_KEY"]
+elif "google_api_key" in st.secrets:
+    GOOGLE_API_KEY = st.secrets["google_api_key"]
 # Fallback to Environment Variable (Docker/Other)
 elif "GOOGLE_API_KEY" in os.environ:
     GOOGLE_API_KEY = os.environ["GOOGLE_API_KEY"]
 
 if not GOOGLE_API_KEY:
     st.error("🚨 API Key Missing!")
+    st.warning("The app is deployed, but it doesn't have the API Key yet.")
     st.info("""
-    **How to fix on Streamlit Cloud:**
-    1. Go to your App Dashboard.
-    2. Click **Settings** (three dots) -> **Secrets**.
-    3. Paste the following:
+    **Final Step - Add your Key to Streamlit Cloud:**
+    
+    1. Click the **'Manage App'** button (bottom right) OR the **Three Dots '⋮'** (top right).
+    2. Select **Settings** > **Secrets**.
+    3. Paste this EXACTLY:
     ```toml
-    GOOGLE_API_KEY = "your_actual_api_key_here"
+    GOOGLE_API_KEY = "your_actual_key_starts_with_AIza..."
     ```
-    4. Click **Save** and refresh this page.
+    4. Click **Save**. The app will reload and work!
     """)
     st.stop()
 
