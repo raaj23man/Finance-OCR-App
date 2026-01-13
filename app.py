@@ -9,17 +9,39 @@ from PIL import Image
 # ==========================================
 # CONFIGURATION
 # ==========================================
-try:
+# ==========================================
+# CONFIGURATION
+# ==========================================
+GOOGLE_API_KEY = None
+
+# Attempt to load from Streamlit Secrets (Cloud) or Local .streamlit/secrets.toml
+if "GOOGLE_API_KEY" in st.secrets:
     GOOGLE_API_KEY = st.secrets["GOOGLE_API_KEY"]
-except FileNotFoundError:
-    st.error("Secrets file not found. Please create .streamlit/secrets.toml")
-    st.stop()
-except KeyError:
-    st.error("GOOGLE_API_KEY not found in secrets.")
+# Fallback to Environment Variable (Docker/Other)
+elif "GOOGLE_API_KEY" in os.environ:
+    GOOGLE_API_KEY = os.environ["GOOGLE_API_KEY"]
+
+if not GOOGLE_API_KEY:
+    st.error("🚨 API Key Missing!")
+    st.info("""
+    **How to fix on Streamlit Cloud:**
+    1. Go to your App Dashboard.
+    2. Click **Settings** (three dots) -> **Secrets**.
+    3. Paste the following:
+    ```toml
+    GOOGLE_API_KEY = "your_actual_api_key_here"
+    ```
+    4. Click **Save** and refresh this page.
+    """)
     st.stop()
 
+# Configure Gemini
 MODEL_NAME = 'gemini-flash-latest'
-genai.configure(api_key=GOOGLE_API_KEY)
+try:
+    genai.configure(api_key=GOOGLE_API_KEY)
+except Exception as e:
+    st.error(f"Error configuring Google AI: {e}")
+
 DATA_FILE = "antigravity_database.csv"
 
 # ==========================================
