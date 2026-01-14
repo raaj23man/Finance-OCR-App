@@ -3,3 +3,5 @@ google-generativeai
 pandas
 Pillow
 watchdog
+gspread
+oauth2client

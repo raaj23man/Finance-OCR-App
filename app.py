@@ -5,13 +5,13 @@ import json
 import os
 from datetime import datetime
 from PIL import Image
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
 
 # ==========================================
 # CONFIGURATION
 # ==========================================
-# ==========================================
-# CONFIGURATION
-# ==========================================
+# 1. API KEY SETUP
 GOOGLE_API_KEY = None
 
 # Attempt to load from Streamlit Secrets (Cloud) or Local .streamlit/secrets.toml
@@ -25,18 +25,6 @@ elif "GOOGLE_API_KEY" in os.environ:
 
 if not GOOGLE_API_KEY:
     st.error("🚨 API Key Missing!")
-    st.warning("The app is deployed, but it doesn't have the API Key yet.")
-    st.info("""
-    **Final Step - Add your Key to Streamlit Cloud:**
-    
-    1. Click the **'Manage App'** button (bottom right) OR the **Three Dots '⋮'** (top right).
-    2. Select **Settings** > **Secrets**.
-    3. Paste this EXACTLY:
-    ```toml
-    GOOGLE_API_KEY = "your_actual_key_starts_with_AIza..."
-    ```
-    4. Click **Save**. The app will reload and work!
-    """)
     st.stop()
 
 # Configure Gemini
@@ -46,7 +34,87 @@ try:
 except Exception as e:
     st.error(f"Error configuring Google AI: {e}")
 
-DATA_FILE = "antigravity_database.csv"
+# ==========================================
+# GOOGLE SHEETS SETUP
+# ==========================================
+SCOPE = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
+
+def get_db_connection():
+    """
+    Connects to Google Sheets using credentials from st.secrets.
+    Expected structure in secrets.toml:
+    [gcp_service_account]
+    type = "service_account"
+    project_id = "..."
+    ...
+    """
+    if "gcp_service_account" not in st.secrets:
+        st.error("🚨 Google Cloud Credentials missing in secrets!")
+        return None
+    
+    try:
+        # Create a dictionary from the secrets object
+        creds_dict = dict(st.secrets["gcp_service_account"])
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, SCOPE)
+        client = gspread.authorize(creds)
+        return client
+    except Exception as e:
+        st.error(f"Failed to authorize Google Sheets: {e}")
+        return None
+
+def get_worksheet():
+    client = get_db_connection()
+    if not client:
+        return None
+    
+    sheet_name = "Finance_OCR_DB" # Default Sheet Name
+    if "SHEET_NAME" in st.secrets:
+        sheet_name = st.secrets["SHEET_NAME"]
+        
+    try:
+        sheet = client.open(sheet_name).sheet1
+        return sheet
+    except gspread.ScreenShotError: # SpreadsheetNotFound 
+        st.error(f"Could not find Google Sheet named '{sheet_name}'. Please create it and share it with the service account email.")
+        return None
+    except Exception as e:
+        st.error(f"Error accessing sheet: {e}")
+        return None
+
+# ==========================================
+# AUTHENTICATION (PASSWORD PROTECTED)
+# ==========================================
+def check_password():
+    """Returns `True` if the user had the correct password."""
+    
+    # If no password is set in secrets, allow open access (dev mode)
+    if "APP_PASSWORD" not in st.secrets:
+        return True
+
+    def password_entered():
+        """Checks whether a password entered by the user is correct."""
+        if st.session_state["password"] == st.secrets["APP_PASSWORD"]:
+            st.session_state["password_correct"] = True
+            del st.session_state["password"]  # don't store password
+        else:
+            st.session_state["password_correct"] = False
+
+    if "password_correct" not in st.session_state:
+        # First run, show input for password.
+        st.text_input(
+            "Enter App Password", type="password", on_change=password_entered, key="password"
+        )
+        return False
+    elif not st.session_state["password_correct"]:
+        # Password incorrect, show input again.
+        st.text_input(
+            "Enter App Password", type="password", on_change=password_entered, key="password"
+        )
+        st.error("😕 Password incorrect")
+        return False
+    else:
+        # Password correct.
+        return True
 
 # ==========================================
 # CUSTOM CSS & UI SETUP
@@ -223,17 +291,51 @@ COLS = [
     "Timestamp"
 ]
 
+@st.cache_data(ttl=10)
 def load_data():
-    if os.path.exists(DATA_FILE):
-        return pd.read_csv(DATA_FILE)
-    return pd.DataFrame(columns=COLS)
+    sheet = get_worksheet()
+    if not sheet:
+        return pd.DataFrame(columns=COLS)
+    
+    try:
+        data = sheet.get_all_records()
+        if not data:
+            return pd.DataFrame(columns=COLS)
+        return pd.DataFrame(data)
+    except Exception as e:
+        # If the sheet is completely empty (no headers)
+        return pd.DataFrame(columns=COLS)
 
 def save_transaction(record):
-    df = load_data()
-    new_row = pd.DataFrame([record])
-    df = pd.concat([df, new_row], ignore_index=True)
-    df.to_csv(DATA_FILE, index=False)
-    return df
+    sheet = get_worksheet()
+    if not sheet:
+        st.error("Cannot save to Google Sheet. Check configuration.")
+        return None
+
+    try:
+        # Check if sheet is empty and add headers if needed
+        if not sheet.get_all_values():
+            sheet.append_row(COLS)
+            
+        # Ensure record values are in the correct order of COLS
+        row_data = [
+            str(record.get('Date', '')),
+            str(record.get('Description', '')),
+            str(record.get('Source_Type', '')),
+            str(record.get('Mode_of_Payment', '')),
+            float(record.get('Purchase_USD', 0.0)),
+            float(record.get('ROE', 0.0)),
+            float(record.get('Payment_NPR', 0.0)),
+            str(record.get('Remarks', '')),
+            str(record.get('Timestamp', datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+        ]
+        
+        sheet.append_row(row_data)
+        load_data.clear() # Clear cache to show new data immediately
+        return True
+    except Exception as e:
+        st.error(f"Error saving to Google Sheet: {e}")
+        return False
 
 # ==========================================
 # AI LOGIC
@@ -247,6 +349,9 @@ def analyze_gemini(image, type_context):
         MODEL_NAME, 
         generation_config=genai.GenerationConfig(response_mime_type="application/json")
     )
+    
+    # Optimize Image Size for Faster Processing
+    image.thumbnail((1024, 1024))
 
     if type_context == 'purchase_usd':
         prompt = """
@@ -294,6 +399,13 @@ def analyze_gemini(image, type_context):
 # ==========================================
 # MAIN APP
 # ==========================================
+
+# CHECK AUTHENTICATION FIRST
+if not check_password():
+    st.image("https://cdn-icons-png.flaticon.com/512/3064/3064197.png", width=100)
+    st.title("Admin Access Required")
+    st.stop()  # Stop execution if password is wrong
+
 st.title("🚀 SNF FX Engine")
 st.markdown("<p style='text-align: center; color: #64748b; margin-top: -20px; margin-bottom: 2rem;'>Financial Intelligence System v2.0</p>", unsafe_allow_html=True)
 
@@ -372,13 +484,14 @@ with tab1:
                         count = 0
                         for rec in valid_records:
                             if rec['Purchase_USD'] > 0 or rec['Description']:
-                                save_transaction(rec)
-                                count += 1
+                                if save_transaction(rec):
+                                    count += 1
                         
-                        st.success(f"Saved {count} records successfully!")
-                        del st.session_state['usd_data']
-                        st.session_state['active_tab'] = None
-                        st.rerun()
+                        if count > 0:
+                            st.success(f"Saved {count} records successfully!")
+                            del st.session_state['usd_data']
+                            st.session_state['active_tab'] = None
+                            st.rerun()
 
 # ==========================================
 # TAB 2: NPR PAYMENT
@@ -451,13 +564,14 @@ with tab2:
                         count = 0
                         for rec in valid_records:
                             if rec['Payment_NPR'] > 0 or rec['Description']:
-                                save_transaction(rec)
-                                count += 1
+                                if save_transaction(rec):
+                                    count += 1
                         
-                        st.success(f"Saved {count} records successfully!")
-                        del st.session_state['npr_data']
-                        st.session_state['active_tab'] = None
-                        st.rerun()
+                        if count > 0:
+                            st.success(f"Saved {count} records successfully!")
+                            del st.session_state['npr_data']
+                            st.session_state['active_tab'] = None
+                            st.rerun()
 
 # ==========================================
 # TAB 3: MANUAL ENTRY
@@ -490,9 +604,9 @@ with tab3:
                     "ROE": roe, "Payment_NPR": npr, "Remarks": rem,
                     "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 }
-                save_transaction(rec)
-                st.success("Record Added Manually.")
-                st.rerun()
+                if save_transaction(rec):
+                    st.success("Record Added Manually.")
+                    st.rerun()
 
 # ==========================================
 # TAB 4: DATA & EXPORT
@@ -540,6 +654,11 @@ with tab4:
 
         with c_table:
             st.markdown("#### Recent Transactions")
+            
+            # Ensure Timestamp is datetime for sorting
+            if 'Timestamp' in df.columns:
+                df['Timestamp'] = pd.to_datetime(df['Timestamp'], errors='coerce')
+            
             st.dataframe(
                 df.sort_values(by="Timestamp", ascending=False), 
                 use_container_width=True,
@@ -562,4 +681,4 @@ with tab4:
         )
             
     else:
-        st.info("No records found. Upload invoices or add manual entries to see the dashboard.")
+        st.info("No records found in Google Sheet. Upload invoices or add manual entries to see the dashboard.")

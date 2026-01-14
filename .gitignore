@@ -36,3 +36,6 @@ MANIFEST
 # Gemini App Data
 antigravity_export_*.csv
 antigravity_database.csv
+
+# macOS
+.DS_Store
