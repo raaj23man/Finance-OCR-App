@@ -337,6 +337,43 @@ def save_transaction(record):
         st.error(f"Error saving to Google Sheet: {e}")
         return False
 
+def save_transactions_batch(records):
+    """
+    Save multiple transactions in a single API call for better speed.
+    Uses append_rows() instead of multiple append_row() calls.
+    """
+    sheet = get_worksheet()
+    if not sheet:
+        st.error("Cannot save to Google Sheet. Check configuration.")
+        return 0
+
+    try:
+        # Check if sheet is empty and add headers if needed
+        if not sheet.get_all_values():
+            sheet.append_row(COLS)
+        
+        rows_data = []
+        for record in records:
+            rows_data.append([
+                str(record.get('Date', '')),
+                str(record.get('Description', '')),
+                str(record.get('Source_Type', '')),
+                str(record.get('Mode_of_Payment', '')),
+                float(record.get('Purchase_USD', 0.0)),
+                float(record.get('ROE', 0.0)),
+                float(record.get('Payment_NPR', 0.0)),
+                str(record.get('Remarks', '')),
+                str(record.get('Timestamp', datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+            ])
+        
+        if rows_data:
+            sheet.append_rows(rows_data)
+            load_data.clear()  # Clear cache to show new data immediately
+        return len(rows_data)
+    except Exception as e:
+        st.error(f"Error saving batch to Google Sheet: {e}")
+        return 0
+
 # ==========================================
 # AI LOGIC
 # ==========================================
@@ -481,17 +518,16 @@ with tab1:
                             except KeyError:
                                 pass
                         
-                        count = 0
-                        for rec in valid_records:
-                            if rec['Purchase_USD'] > 0 or rec['Description']:
-                                if save_transaction(rec):
-                                    count += 1
+                        # Filter valid records and save in batch for speed
+                        final_records = [rec for rec in valid_records if rec['Purchase_USD'] > 0 or rec['Description']]
                         
-                        if count > 0:
-                            st.success(f"Saved {count} records successfully!")
-                            del st.session_state['usd_data']
-                            st.session_state['active_tab'] = None
-                            st.rerun()
+                        if final_records:
+                            count = save_transactions_batch(final_records)
+                            if count > 0:
+                                st.success(f"⚡ Saved {count} records successfully!")
+                                del st.session_state['usd_data']
+                                st.session_state['active_tab'] = None
+                                st.rerun()
 
 # ==========================================
 # TAB 2: NPR PAYMENT
@@ -561,17 +597,16 @@ with tab2:
                             except KeyError:
                                 pass
 
-                        count = 0
-                        for rec in valid_records:
-                            if rec['Payment_NPR'] > 0 or rec['Description']:
-                                if save_transaction(rec):
-                                    count += 1
+                        # Filter valid records and save in batch for speed
+                        final_records = [rec for rec in valid_records if rec['Payment_NPR'] > 0 or rec['Description']]
                         
-                        if count > 0:
-                            st.success(f"Saved {count} records successfully!")
-                            del st.session_state['npr_data']
-                            st.session_state['active_tab'] = None
-                            st.rerun()
+                        if final_records:
+                            count = save_transactions_batch(final_records)
+                            if count > 0:
+                                st.success(f"⚡ Saved {count} records successfully!")
+                                del st.session_state['npr_data']
+                                st.session_state['active_tab'] = None
+                                st.rerun()
 
 # ==========================================
 # TAB 3: MANUAL ENTRY
@@ -621,64 +656,225 @@ with tab4:
         df['Payment_NPR'] = pd.to_numeric(df['Payment_NPR'], errors='coerce').fillna(0)
         
         df['Calculated_Cost_NPR'] = df['Purchase_USD'] * df['ROE']
-        df['Balance'] = df['Payment_NPR'] - df['Calculated_Cost_NPR']
         
-        # Dashboard Header
-        st.markdown("### 📊 Financial Dashboard")
+        # ============================================
+        # FINANCIAL SUMMARY DASHBOARD
+        # ============================================
+        total_usd = df['Purchase_USD'].sum()
+        total_npr_paid = df['Payment_NPR'].sum()
+        total_calculated_cost = df['Calculated_Cost_NPR'].sum()
+        net_balance = total_npr_paid - total_calculated_cost
         
-        # 1. Key Metrics Row
-        m1, m2, m3 = st.columns(3)
-        m1.metric("Total USD Purchased", f"${df['Purchase_USD'].sum():,.2f}", delta="USD Volume")
-        m2.metric("Total NPR Paid", f"Rs. {df['Payment_NPR'].sum():,.2f}", delta="NPR Outflow")
+        # Get latest transaction date
+        if 'Date' in df.columns:
+            df['DateParsed'] = pd.to_datetime(df['Date'], errors='coerce')
+            latest_date = df['DateParsed'].max()
+            if pd.notna(latest_date):
+                latest_date_str = latest_date.strftime('%Y-%m-%d')
+            else:
+                latest_date_str = "N/A"
+        else:
+            latest_date_str = "N/A"
         
-        net_bal = df['Balance'].sum()
-        m3.metric("Net Imbalance", f"Rs. {net_bal:,.2f}", delta="Surplus/Deficit", delta_color="off")
+        # Count transactions by type
+        invoice_count = len(df[df['Source_Type'].str.contains('Invoice|USD', case=False, na=False)])
+        payment_count = len(df[df['Source_Type'].str.contains('Payment|Slip', case=False, na=False)])
+        
+        # Average ROE (excluding zeros)
+        roe_values = df[df['ROE'] > 0]['ROE']
+        avg_roe = roe_values.mean() if len(roe_values) > 0 else 0
+        
+        # ============================================
+        # DASHBOARD HEADER WITH SUMMARY CARDS
+        # ============================================
+        st.markdown("""
+        <div style="text-align: center; margin-bottom: 1.5rem;">
+            <h2 style="margin: 0; color: #1e293b;">📊 Financial Dashboard</h2>
+            <p style="color: #64748b; margin-top: 0.5rem;">Complete overview of your USD purchases and NPR payments</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Row 1: Main Financial Metrics
+        st.markdown("#### 💰 Financial Summary")
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.markdown("""
+            <div style="background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%); padding: 1.2rem; border-radius: 16px; color: white; text-align: center;">
+                <p style="margin: 0; font-size: 0.85rem; opacity: 0.9;">💵 Total USD Purchased</p>
+                <h2 style="margin: 0.5rem 0 0 0; font-size: 1.8rem; font-weight: 700;">$""" + f"{total_usd:,.2f}" + """</h2>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col2:
+            st.markdown("""
+            <div style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); padding: 1.2rem; border-radius: 16px; color: white; text-align: center;">
+                <p style="margin: 0; font-size: 0.85rem; opacity: 0.9;">💳 Total NPR Paid</p>
+                <h2 style="margin: 0.5rem 0 0 0; font-size: 1.8rem; font-weight: 700;">Rs. """ + f"{total_npr_paid:,.2f}" + """</h2>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col3:
+            st.markdown("""
+            <div style="background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%); padding: 1.2rem; border-radius: 16px; color: white; text-align: center;">
+                <p style="margin: 0; font-size: 0.85rem; opacity: 0.9;">📐 Calculated Cost (NPR)</p>
+                <h2 style="margin: 0.5rem 0 0 0; font-size: 1.8rem; font-weight: 700;">Rs. """ + f"{total_calculated_cost:,.2f}" + """</h2>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col4:
+            # Dynamic color based on balance
+            if net_balance >= 0:
+                balance_gradient = "linear-gradient(135deg, #22c55e 0%, #16a34a 100%)"
+                balance_label = "✅ Receivable (Overpaid)"
+                balance_icon = "📈"
+            else:
+                balance_gradient = "linear-gradient(135deg, #ef4444 0%, #dc2626 100%)"
+                balance_label = "⚠️ Payable (Due)"
+                balance_icon = "📉"
+            
+            st.markdown(f"""
+            <div style="background: {balance_gradient}; padding: 1.2rem; border-radius: 16px; color: white; text-align: center;">
+                <p style="margin: 0; font-size: 0.85rem; opacity: 0.9;">{balance_icon} Net Balance</p>
+                <h2 style="margin: 0.5rem 0 0 0; font-size: 1.8rem; font-weight: 700;">Rs. {abs(net_balance):,.2f}</h2>
+                <p style="margin: 0.3rem 0 0 0; font-size: 0.75rem; opacity: 0.85;">{balance_label}</p>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        st.markdown("<br>", unsafe_allow_html=True)
+        
+        # Row 2: Secondary Stats
+        st.markdown("#### 📈 Quick Stats")
+        stat1, stat2, stat3, stat4 = st.columns(4)
+        
+        with stat1:
+            st.markdown(f"""
+            <div style="background: white; padding: 1rem; border-radius: 12px; border: 1px solid #e2e8f0; text-align: center;">
+                <p style="margin: 0; color: #64748b; font-size: 0.8rem;">📄 USD Invoices</p>
+                <h3 style="margin: 0.3rem 0 0 0; color: #1e293b;">{invoice_count}</h3>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with stat2:
+            st.markdown(f"""
+            <div style="background: white; padding: 1rem; border-radius: 12px; border: 1px solid #e2e8f0; text-align: center;">
+                <p style="margin: 0; color: #64748b; font-size: 0.8rem;">🧾 NPR Payments</p>
+                <h3 style="margin: 0.3rem 0 0 0; color: #1e293b;">{payment_count}</h3>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with stat3:
+            st.markdown(f"""
+            <div style="background: white; padding: 1rem; border-radius: 12px; border: 1px solid #e2e8f0; text-align: center;">
+                <p style="margin: 0; color: #64748b; font-size: 0.8rem;">📊 Avg. ROE</p>
+                <h3 style="margin: 0.3rem 0 0 0; color: #1e293b;">{avg_roe:.2f}</h3>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with stat4:
+            st.markdown(f"""
+            <div style="background: white; padding: 1rem; border-radius: 12px; border: 1px solid #e2e8f0; text-align: center;">
+                <p style="margin: 0; color: #64748b; font-size: 0.8rem;">📅 Latest Entry</p>
+                <h3 style="margin: 0.3rem 0 0 0; color: #1e293b; font-size: 1rem;">{latest_date_str}</h3>
+            </div>
+            """, unsafe_allow_html=True)
         
         st.markdown("---")
         
-        # 2. Charts & Data Layout
+        # ============================================
+        # CHARTS & DATA TABLE
+        # ============================================
         c_chart, c_table = st.columns([1, 2])
         
         with c_chart:
-            st.markdown("#### Transaction Trends")
-            # Simple aggregation by Date
-            if 'Date' in df.columns:
+            st.markdown("#### 📉 Transaction Trends")
+            if 'DateParsed' in df.columns:
                 try:
-                    df['DateObj'] = pd.to_datetime(df['Date'], errors='coerce')
-                    daily = df.groupby('DateObj')[['Purchase_USD', 'Payment_NPR']].sum()
-                    st.bar_chart(daily)
+                    daily = df.groupby('DateParsed')[['Purchase_USD', 'Payment_NPR']].sum()
+                    if not daily.empty:
+                        st.bar_chart(daily)
+                    else:
+                        st.info("Not enough data for trend chart.")
                 except:
                     st.info("Not enough data for trend chart.")
             else:
-                 st.info("Date column missing.")
+                st.info("Date column missing.")
 
         with c_table:
-            st.markdown("#### Recent Transactions")
+            st.markdown("#### 📋 Recent Transactions")
             
-            # Ensure Timestamp is datetime for sorting
-            if 'Timestamp' in df.columns:
-                df['Timestamp'] = pd.to_datetime(df['Timestamp'], errors='coerce')
+            # Prepare display dataframe
+            display_df = df.copy()
+            if 'Timestamp' in display_df.columns:
+                display_df['Timestamp'] = pd.to_datetime(display_df['Timestamp'], errors='coerce')
+            
+            # Select and order columns for display
+            display_cols = ['Date', 'Description', 'Source_Type', 'Purchase_USD', 'ROE', 'Payment_NPR', 'Mode_of_Payment', 'Remarks']
+            display_cols = [c for c in display_cols if c in display_df.columns]
             
             st.dataframe(
-                df.sort_values(by="Timestamp", ascending=False), 
+                display_df[display_cols].sort_values(by="Date", ascending=False) if 'Date' in display_df.columns else display_df, 
                 use_container_width=True,
-                height=400,
+                height=350,
                 column_config={
-                    "Purchase_USD": st.column_config.NumberColumn(format="$%.2f"),
-                    "Payment_NPR": st.column_config.NumberColumn(format="Rs. %.2f"),
-                    "ROE": st.column_config.NumberColumn(format="%.2f"),
+                    "Purchase_USD": st.column_config.NumberColumn("USD Amount", format="$%.2f"),
+                    "Payment_NPR": st.column_config.NumberColumn("NPR Amount", format="Rs. %.2f"),
+                    "ROE": st.column_config.NumberColumn("Rate", format="%.2f"),
+                    "Source_Type": st.column_config.TextColumn("Type"),
+                    "Mode_of_Payment": st.column_config.TextColumn("Payment Mode"),
                 }
             )
         
-        # export
-        csv = df.to_csv(index=False).encode('utf-8')
-        st.download_button(
-            "📥 Download Complete Ledger (CSV)",
-            data=csv,
-            file_name=f"snf_fx_ledger_{datetime.now().strftime('%Y%m%d')}.csv",
-            mime="text/csv",
-            use_container_width=True
-        )
+        st.markdown("<br>", unsafe_allow_html=True)
+        
+        # ============================================
+        # EXPORT SECTION
+        # ============================================
+        st.markdown("#### 📥 Export Data")
+        exp1, exp2 = st.columns(2)
+        
+        with exp1:
+            csv = df.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                "📥 Download Complete Ledger (CSV)",
+                data=csv,
+                file_name=f"snf_fx_ledger_{datetime.now().strftime('%Y%m%d')}.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
+        
+        with exp2:
+            # Summary report as text
+            summary_report = f"""SNF FX Engine - Financial Summary Report
+Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+{'='*50}
+
+FINANCIAL OVERVIEW
+------------------
+Total USD Purchased: ${total_usd:,.2f}
+Total NPR Paid: Rs. {total_npr_paid:,.2f}
+Calculated Cost (NPR): Rs. {total_calculated_cost:,.2f}
+Net Balance: Rs. {net_balance:,.2f} ({'Receivable' if net_balance >= 0 else 'Payable'})
+
+TRANSACTION STATS
+-----------------
+USD Invoices: {invoice_count}
+NPR Payments: {payment_count}
+Average ROE: {avg_roe:.2f}
+Latest Entry: {latest_date_str}
+"""
+            st.download_button(
+                "📄 Download Summary Report (TXT)",
+                data=summary_report.encode('utf-8'),
+                file_name=f"snf_fx_summary_{datetime.now().strftime('%Y%m%d')}.txt",
+                mime="text/plain",
+                use_container_width=True
+            )
             
     else:
-        st.info("No records found in Google Sheet. Upload invoices or add manual entries to see the dashboard.")
+        st.markdown("""
+        <div style="text-align: center; padding: 3rem; background: white; border-radius: 20px; margin: 2rem 0;">
+            <h3 style="color: #64748b;">📊 No Data Yet</h3>
+            <p style="color: #94a3b8;">Upload invoices or add manual entries to see your financial dashboard</p>
+        </div>
+        """, unsafe_allow_html=True)
