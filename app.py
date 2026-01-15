@@ -175,6 +175,20 @@ st.markdown("""
         padding-bottom: 4rem;
     }
 
+    /* HIDE HEADER AND TOOLBAR */
+    header[data-testid="stHeader"] {
+        visibility: hidden;
+        height: 0%;
+    }
+    
+    footer {
+        visibility: hidden;
+    }
+
+    #MainMenu {
+        visibility: hidden;
+    }
+
     /* Cards */
     .stForm, div[data-testid="stMetric"], .css-1r6slb0, .stDataFrame {
         background: rgba(255, 255, 255, 0.85);
@@ -251,17 +265,28 @@ st.markdown("""
         box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
     }
 
-    /* Input Fields */
-    .stTextInput>div>div>input, .stNumberInput>div>div>input {
+    /* Input Fields Fix */
+    .stTextInput>div>div>input, .stNumberInput>div>div>input, .stSelectbox [data-baseweb="select"] {
         border-radius: 12px;
         border: 1px solid #e2e8f0;
         padding: 0.5rem 1rem;
         transition: all 0.2s;
+        background-color: white !important;
+        color: #1e293b !important;
     }
     
     .stTextInput>div>div>input:focus, .stNumberInput>div>div>input:focus {
         border-color: #6366f1;
         box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+    }
+
+    /* Ensure dropdown items are readable */
+    div[data-baseweb="popover"] {
+        background-color: white !important;
+    }
+    
+    div[role="listbox"] div {
+        color: #1e293b !important;
     }
     
     /* Animations */
