@@ -129,20 +129,21 @@ st.markdown("""
         --primary: #6366f1;
         --secondary: #818cf8;
         --accent: #ec4899;
-        --bg-color: #0f172a;
+        --bg-color: #f8fafc;
         --card-bg: rgba(255, 255, 255, 0.95);
         --text-primary: #1e293b;
     }
 
     /* Animated Background */
     .stApp {
-        background-color: #eef2ff;
+        background-color: #f8fafc !important;
         background-image: 
-            radial-gradient(at 0% 0%, hsla(253,16%,7%,1) 0, transparent 50%), 
-            radial-gradient(at 50% 0%, hsla(225,39%,30%,1) 0, transparent 50%), 
-            radial-gradient(at 100% 0%, hsla(339,49%,30%,1) 0, transparent 50%);
+            radial-gradient(at 0% 0%, hsla(253,16%,95%,1) 0, transparent 50%), 
+            radial-gradient(at 50% 0%, hsla(225,39%,90%,1) 0, transparent 50%), 
+            radial-gradient(at 100% 0%, hsla(339,49%,90%,1) 0, transparent 50%);
         background-size: 100% 100%;
         font-family: 'Inter', sans-serif;
+        color: #1e293b !important;
     }
     
     /* For Light Mode clarity over dark gradients if Streamlit forces light theme */
