@@ -61,6 +61,45 @@ A powerful Streamlit application designed to streamline financial tracking by le
    streamlit run app.py
    ```
 
+## ☁️ Deploy to Streamlit Cloud
+
+This application is ready for deployment on [Streamlit Cloud](https://share.streamlit.io/).
+
+### Quick Deploy Steps
+
+1. **Fork/Push to GitHub**: Ensure your code is in a GitHub repository.
+
+2. **Go to Streamlit Cloud**: Visit [share.streamlit.io](https://share.streamlit.io/) and sign in with GitHub.
+
+3. **Deploy the App**:
+   - Click "New app"
+   - Select your repository: `raaj23man/Finance-OCR-App`
+   - Branch: `main`
+   - Main file path: `app.py`
+
+4. **Configure Secrets**:
+   In Streamlit Cloud's app settings, go to **Secrets** and add:
+   ```toml
+   GOOGLE_API_KEY = "your_actual_api_key_here"
+
+   [google_sheets]
+   type = "service_account"
+   project_id = "your-project-id"
+   private_key_id = "your-key-id"
+   private_key = "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
+   client_email = "your-service-account@your-project.iam.gserviceaccount.com"
+   client_id = "your-client-id"
+   auth_uri = "https://accounts.google.com/o/oauth2/auth"
+   token_uri = "https://oauth2.googleapis.com/token"
+   auth_provider_x509_cert_url = "https://www.googleapis.com/oauth2/v1/certs"
+   client_x509_cert_url = "your-cert-url"
+   spreadsheet_id = "your-spreadsheet-id"
+   ```
+
+5. **Deploy!** Click "Deploy" and your app will be live in minutes.
+
+> **Note**: The `GOOGLE_API_KEY` is required for AI-powered OCR. The `google_sheets` configuration is optional and only needed if you want Google Sheets integration for data backup.
+
 ## 📖 Usage Guide
 
 1. **🇺🇸 USD Purchase Tab**: 
